@@ -318,6 +318,16 @@ div[aria-label="clear_chat_button"] > button:hover {
 """
 st.markdown(CLEAR_CHAT_CSS, unsafe_allow_html=True)
 
+HIDE_SIDEBAR_TOGGLE = """
+<style>
+/* Hide the sidebar collapse/expand button */
+section[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"] {
+    display: none !important;
+}
+</style>
+"""
+st.markdown(HIDE_SIDEBAR_TOGGLE, unsafe_allow_html=True)
+
 
 # ---------- Utilities ----------
 def strip_html_tags(text: str) -> str:
@@ -714,4 +724,5 @@ if last_assistant:
                     st.write("No sources to show.")
 
 st.caption("If you see ADC errors when calling BigQuery, run `gcloud auth application-default login` or set GOOGLE_APPLICATION_CREDENTIALS.")
+
 
