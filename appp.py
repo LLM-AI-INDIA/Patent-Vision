@@ -272,7 +272,7 @@ def test_bq_connection():
     try:
         client = bigquery.Client(project=PROJECT)
         df = client.query("SELECT 1 as ok LIMIT 1").result().to_dataframe()
-        return True, f"Connected to BigQuery project: {client.project}"
+        return True, f"Connected to BigQuery project"
     except Exception as ex:
         return False, str(ex)
 
@@ -493,4 +493,5 @@ if last_assistant:
                     st.write("No sources to show.")
 
 st.caption("If you see ADC errors when calling BigQuery, run `gcloud auth application-default login` or set GOOGLE_APPLICATION_CREDENTIALS.")
+
 
