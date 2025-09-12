@@ -64,6 +64,10 @@ else:
     st.warning("No GCP service account found in Streamlit secrets. Add 'gcp_service_account' or 'gcp_service_account_b64'.")
 
 
+# appp_chat_with_dropdowns.py
+# Patent RAG — Chat (dropdown controls)
+# Run: streamlit run appp_chat_with_dropdowns.py
+
 import streamlit as st
 from google.cloud import bigquery
 import pandas as pd
@@ -86,21 +90,26 @@ RUN_BQ_TEST = True
 
 st.set_page_config(page_title="Patent RAG — Chat", layout="wide", initial_sidebar_state="expanded")
 
-# ---------- CSS ----------
 CSS = """
 <style>
 /* ---------- Sidebar sizing and color ---------- */
 section[data-testid="stSidebar"], div[data-testid="stSidebar"] {
   background-color: #318CE7 !important;
-  padding: 3rem 1.5rem !important;
+  padding: 0rem 0.2rem !important;
   color: #ffffff !important;
-  width: 420px !important;         /* <-- increased */
-  min-width: 420px !important;     /* <-- increased */
+  width: 335px !important;         /* <-- increased */
+  min-width: 335px !important;     /* <-- increased */
   box-sizing: border-box !important;
 }
 
 /* Header */
-header[data-testid="stHeader"] { height: 57px !important; }
+header[data-testid="stHeader"] { 
+  visibility: visible !important;
+  display: flex !important;
+  height: 60px !important;   /* enough room for buttons */
+  padding: 0 1rem !important;
+  z-index: 9999 !important;  /* keep it above other elements */
+  }
 
 /* Centered inline logo id */
 #custom-centered-logo {
@@ -110,12 +119,28 @@ header[data-testid="stHeader"] { height: 57px !important; }
   width: 260px !important;
   max-width: 60% !important;
   position: relative !important;
-  top: -36px !important;
+  top: -50px !important;
+  margin-top: 0 !important;   /* kill extra margin */
   z-index: 9999 !important;
 }
 
+/* Reduce default top padding/margin of the whole app */
+div[data-testid="stAppViewContainer"] {
+  padding-top: 0 !important;     /* remove top padding */
+  margin-top: 0 !important;  /* pull everything up */
+}
+
+/* Also adjust the main block container */
+div[data-testid="stAppViewBlockContainer"],
+div.block-container {
+  margin-top: -60px !important;   /* adjust as needed */
+  padding-top: 2 !important;
+}
+
+
+
 /* Centered heading */
-.centered-h2 { text-align:center; margin-top: -6px; font-size: 28px !important; color: #222222 !important; }
+.centered-h2 { text-align:center; margin-top: -20px; font-size: 28px !important; color: #222222 !important; }
 
 /* Main Send button green (applies to st.form submit) */
 .stButton > button {
@@ -200,7 +225,7 @@ footer { visibility: hidden !important; height: 0px !important; }
 
 @media (max-width: 1200px) {
   section[data-testid="stSidebar"] { width: 300px !important; min-width:300px !important; }
-  #custom-centered-logo { top: -30px !important; width: 240px !important; max-width:55% !important; }
+  #custom-centered-logo { top: -30px !important; width: 240px !important; max-width:55% !important; margin-bottom: 0 !important; }
 }
 
 div[aria-label="clear_chat_button"] > button {
@@ -212,73 +237,158 @@ div[aria-label="clear_chat_button"] > button {
   font-weight: 700 !important;
   box-shadow: none !important;
 }
+
+div[data-testid="stAppViewContainer"] img#custom-centered-logo {
+  margin-bottom: -20px !important;   /* pull heading closer to logo */
+}
+
+div[data-testid="stAppViewContainer"] h2.centered-h2 {
+  margin-top: -20px !important;      /* reduce gap above heading */
+}
+
+/* Reduce space below the heading */
+.centered-h2 {
+  margin-bottom: 4px !important;   /* tighter gap under "Patent Vision" */
+}
+
+/* Reduce space above the description text */
+div[data-testid="stAppViewContainer"] p {
+  margin-top: 0 !important;        /* remove extra top space */
+}
+
+section[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"] {
+    display: block !important;
+    color: #888 !important;   /* make arrow grey */
+}
+
+/* Collapse button — completely transparent */
+[data-testid="stSidebarCollapseButton"],
+[data-testid="stSidebarCollapseButton"] * {
+    background: transparent !important;
+    box-shadow: none !important;
+    border: none !important;
+    outline: none !important;
+}
+
+/* On hover/focus/active — still transparent */
+[data-testid="stSidebarCollapseButton"]:hover,
+[data-testid="stSidebarCollapseButton"]:focus,
+[data-testid="stSidebarCollapseButton"]:active,
+[data-testid="stSidebarCollapseButton"] *:hover,
+[data-testid="stSidebarCollapseButton"] *:focus,
+[data-testid="stSidebarCollapseButton"] *:active {
+    background: transparent !important;
+    box-shadow: none !important;
+    border: none !important;
+    outline: none !important;
+}
+
+/* Force the collapse button itself transparent */
+button[data-testid="stSidebarCollapseButton"] {
+    background: transparent !important;
+    box-shadow: none !important;
+    border: none !important;
+    outline: none !important;
+}
+
+/* Kill hover, focus, active states */
+button[data-testid="stSidebarCollapseButton"]:hover,
+button[data-testid="stSidebarCollapseButton"]:focus,
+button[data-testid="stSidebarCollapseButton"]:active {
+    background: transparent !important;
+    box-shadow: none !important;
+    border: none !important;
+    outline: none !important;
+}
+
+/* Optional: recolor the arrow icon (white to match sidebar) */
+button[data-testid="stSidebarCollapseButton"] span[data-testid="stIconMaterial"] {
+    color: #ffffff !important;
+}
+
+/* -----------------------
+   Collapse-arrow: absolutely transparent (no white hover box)
+   Insert this at the *end* of your CSS block so it overrides everything.
+   ----------------------- */
+
+/* target the button, its descendants and common ancestor placements */
+[data-testid="stSidebarCollapseButton"],
+header [data-testid="stSidebarCollapseButton"],
+section[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"],
+[data-testid="stSidebarCollapseButton"] * ,
+header [data-testid="stSidebarCollapseButton"] * ,
+section[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"] * {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  -webkit-box-shadow: none !important;
+  border: none !important;
+  outline: none !important;
+  filter: none !important;
+  backdrop-filter: none !important;
+}
+
+/* also clear pseudo-elements that create hover rectangles */
+[data-testid="stSidebarCollapseButton"]::before,
+[data-testid="stSidebarCollapseButton"]::after,
+header [data-testid="stSidebarCollapseButton"]::before,
+header [data-testid="stSidebarCollapseButton"]::after,
+section[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"]::before,
+section[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"]::after {
+  content: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+/* kill hover / focus / active highlight on button and descendants */
+[data-testid="stSidebarCollapseButton"]:hover,
+[data-testid="stSidebarCollapseButton"]:focus,
+[data-testid="stSidebarCollapseButton"]:active,
+[data-testid="stSidebarCollapseButton"] *:hover,
+[data-testid="stSidebarCollapseButton"] *:focus,
+[data-testid="stSidebarCollapseButton"] *:active,
+header [data-testid="stSidebarCollapseButton"]:hover,
+header [data-testid="stSidebarCollapseButton"]:focus,
+header [data-testid="stSidebarCollapseButton"]:active,
+header [data-testid="stSidebarCollapseButton"] *:hover,
+header [data-testid="stSidebarCollapseButton"] *:focus,
+header [data-testid="stSidebarCollapseButton"] *:active,
+section[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"]:hover,
+section[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"]:focus,
+section[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"]:active,
+section[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"] *:hover,
+section[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"] *:focus,
+section[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"] *:active {
+  background: transparent !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+  -webkit-box-shadow: none !important;
+  border: none !important;
+  outline: none !important;
+}
+
+/* As a last resort, remove any explicit background color from immediate parent nodes
+   (these are safe to force transparent for the collapse-button area only) */
+header [data-testid="stHeader"] [role="button"],
+header [data-testid="stHeader"] [role="button"] * {
+  background: transparent !important;
+  box-shadow: none !important;
+  border: none !important;
+}
+
+/* Recolor the icon to white (optional; helps visibility on blue sidebar) */
+[data-testid="stSidebarCollapseButton"] span[data-testid="stIconMaterial"],
+header [data-testid="stSidebarCollapseButton"] span[data-testid="stIconMaterial"] {
+  color: #ffffff !important;
+  fill: #ffffff !important;
+}
+
+
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
-EXTRA_SELECT_CSS = """
-<style>
-/* Make selectboxes in the sidebar appear as standalone white boxes (full width, separated) */
-section[data-testid="stSidebar"] .stSelectbox,
-section[data-testid="stSidebar"] .stSelectbox > div,
-section[data-testid="stSidebar"] .stSelectbox > div > div {
-  width: calc(100% - 32px) !important;   /* leave some padding from sidebar edges */
-  margin: 10px 16px !important;          /* separated from the 'card' */
-  background: #ffffff !important;        /* white control */
-  border-radius: 8px !important;
-  border: 1px solid rgba(0,0,0,0.08) !important;
-  box-shadow: none !important;
-  box-sizing: border-box !important;
-  padding: 6px 12px !important;         /* inner padding for clean look */
-}
 
-/* Target the visible value area so the number/value looks outside the card */
-section[data-testid="stSidebar"] .stSelectbox > div > div > div[role="listbox"],
-section[data-testid="stSidebar"] .stSelectbox > div > div > div[role="button"],
-section[data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] {
-  background: transparent !important;
-  border: none !important;
-  padding: 0 !important;
-  width: 100% !important;
-}
-
-/* Make the dropdown arrow visible and positioned correctly */
-section[data-testid="stSidebar"] .stSelectbox svg,
-section[data-testid="stSidebar"] .stSelectbox button {
-  color: #222222 !important;
-  fill: #222222 !important;
-  right: 12px !important;
-  z-index: 9999 !important;
-}
-
-/* Make sure dropdown menu appears above everything (avoid clipping) */
-div[role="presentation"] > ul[role="listbox"],
-div[role="presentation"] .menu, .rc-virtual-list {
-  z-index: 99999 !important;
-}
-
-/* If the selectbox is inside a container with a strong border-radius,
-   move it outside visually by increasing negative margin-top if needed */
-section[data-testid="stSidebar"] .stSelectbox {
-  margin-top: 12px !important;
-}
-
-/* Reduce the rounded white container effect by flattening immediate parent */
-section[data-testid="stSidebar"] .stSelectbox .css-1n76uvr, /* fallback class */
-section[data-testid="stSidebar"] .stSelectbox .css-1q8dd3e { /* fallback class */
-  background: transparent !important;
-  box-shadow: none !important;
-}
-
-/* Small responsive tweak */
-@media (max-width: 1200px) {
-  section[data-testid="stSidebar"] .stSelectbox,
-  section[data-testid="stSidebar"] .stSelectbox > div {
-    width: calc(100% - 28px) !important; margin: 8px 14px !important;
-  }
-}
-</style>
-"""
-st.markdown(EXTRA_SELECT_CSS, unsafe_allow_html=True)
 
 LABEL_CSS = """
 <style>
@@ -318,15 +428,78 @@ div[aria-label="clear_chat_button"] > button:hover {
 """
 st.markdown(CLEAR_CHAT_CSS, unsafe_allow_html=True)
 
-HIDE_SIDEBAR_TOGGLE = """
+# ---- Add this AFTER st.markdown(CSS, unsafe_allow_html=True) ----
+SIDEBAR_INNER_DROPDOWN_CSS = """
 <style>
-/* Hide the sidebar collapse/expand button */
-section[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"] {
-    display: none !important;
+/* Make wrapper transparent so only the inner dropdown button is the visible horizontal card */
+section[data-testid="stSidebar"] .stSelectbox > div {
+  background: transparent !important;
+  box-shadow: none !important;
+  border: none !important;
+  padding: 0 !important;
+  margin: 0px !important;
 }
+
+/* Style only the interactive inner button as a single horizontal white card */
+section[data-testid="stSidebar"] .stSelectbox > div > div[role="button"],
+section[data-testid="stSidebar"] .stSelectbox > div > div[role="button"] > div {
+  background: #ffffff !important;
+  padding: 10px 14px !important;
+  border-radius: 10px !important;
+  border: 1px solid rgba(0,0,0,0.06) !important;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.05) !important;
+  width: calc(100% - 20px) !important;
+  margin: 10px 10px !important;
+  min-height: 46px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  box-sizing: border-box !important;
+}
+
+/* Keep the caret visible and clickable */
+section[data-testid="stSidebar"] .stSelectbox svg,
+section[data-testid="stSidebar"] .stSelectbox button {
+  right: 12px !important;
+  z-index: 9999 !important;
+  fill: #222 !important;
+  color: #222 !important;
+}
+
+/* Hide external label (so only inner card appears). If you want the label, set to 'block' */
+section[data-testid="stSidebar"] label {
+  display: none !important;
+}
+
+/* small responsive tweak */
+@media (max-width: 1200px) {
+  section[data-testid="stSidebar"] .stSelectbox > div > div[role="button"] {
+    width: calc(100% - 16px) !important;
+    margin: 8px 8px !important;
+  }
+}
+
+/* Add uniform vertical spacing between sidebar controls (dropdowns, number inputs, sliders, buttons, etc.) */
+section[data-testid="stSidebar"] .stSelectbox,
+section[data-testid="stSidebar"] .stNumberInput,
+section[data-testid="stSidebar"] .stSlider,
+section[data-testid="stSidebar"] .stCheckbox,
+section[data-testid="stSidebar"] .stButton,
+section[data-testid="stSidebar"] .stTextArea,
+section[data-testid="stSidebar"] .stTextInput,
+section[data-testid="stSidebar"] .stFileUploader,
+section[data-testid="stSidebar"] .stDownloadButton {
+  margin-bottom: 12px !important;
+}
+
+
+
 </style>
 """
-st.markdown(HIDE_SIDEBAR_TOGGLE, unsafe_allow_html=True)
+st.markdown(SIDEBAR_INNER_DROPDOWN_CSS, unsafe_allow_html=True)
+
+
+
 
 
 # ---------- Utilities ----------
@@ -389,62 +562,80 @@ st.session_state.chat_history = sanitized
 
 # ---------- Sidebar (Advanced settings using dropdowns) ----------
 with st.sidebar:
-    st.title("Controls")
-    st.markdown("### Advanced settings")
+    st.markdown("<h2 style='text-align:center; color:white;'>Solution Scope</h2> <br>", unsafe_allow_html=True)
 
-    # top_k dropdown (few sensible options)
+        # Options
+    ABOUT_OPTS = ["Home","About Us"]
+    APPLICATION_OPTS = ["Application","Patent Q&A (RAG)", "Patent Summarization", "Similarity Search"]
+    LIBRARIES_OPTS = ["Libraries","Streamlit", "google-cloud-bigquery", "pandas", "faiss", "transformers"]
+
+    # Render in sidebar using st.sidebar.selectbox (guaranteed to be in the sidebar)
+    about = st.sidebar.selectbox("Home", ABOUT_OPTS, index=0, key="about_us_sel")
+    app = st.sidebar.selectbox("Application", APPLICATION_OPTS, index=0, key="application_sel")
+    libs = st.sidebar.selectbox("Libraries", LIBRARIES_OPTS, index=0, key="libraries_sel")
+
+
+
     st.session_state.top_k_val = st.number_input(
-    "top_k (retrieval)",
-    min_value=1,
-    max_value=50,
-    value=st.session_state.get("top_k_val", 5),
-    step=1,
-    format="%d",
-    key="top_k_number"
-)
+        "top_k (retrieval)", min_value=1, max_value=50,
+        value=st.session_state.get("top_k_val", 5), step=1,
+        format="%d", key="top_k_number"
+    )
 
+    st.session_state.temperature_val = st.number_input(
+        "temperature", min_value=0.0, max_value=1.0,
+        value=st.session_state.get("temperature_val", 0.2),
+        step=0.01, format="%.2f", key="temperature_number"
+    )
 
-    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-
-    # temperature slider
-    st.session_state.temperature_val = st.slider("temperature", 0.0, 1.0, st.session_state.get("temperature_val", 0.2), 0.01, key="temperature_slider")
-
-    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-
-    # max_output_tokens dropdown
     st.session_state.max_output_tokens_val = st.number_input(
-        "max_output_tokens",
-        min_value=64,
-        max_value=2000,
+        "max_output_tokens", min_value=64, max_value=2000,
         value=st.session_state.get("max_output_tokens_val", 800),
-        step=64,
-        format="%d",
-        key="max_out_number"
-)
+        step=64, format="%d", key="max_out_number"
+    )
 
-
-    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
-
-    show_sources = st.checkbox("Show top-k sources", value=st.session_state.get("show_sources_box", True), key="show_sources_box")
+    show_sources = st.checkbox(
+        "Show top-k sources",
+        value=st.session_state.get("show_sources_box", True),
+        key="show_sources_box"
+    )
 
     st.markdown("---")
 
-    # BigQuery embedding test (white button)
-    if st.button("Run BigQuery embedding test", key="bq_test_button"):
-        st.session_state._run_bq_test_from_ui = True
-    # small CSS injection to make the last rendered button full-width in sidebar
-    st.markdown("<style>section[data-testid='stSidebar'] .stButton > button:last-of-type { width:100% !important; text-align:left !important; padding-left:12px !important; }</style>", unsafe_allow_html=True)
-
-    # Clear chat: render as a submit input inside a tiny form (this input is targeted by CSS to be green)
-    if st.button("Clear chat", key="clear_chat_button"):
+    clear_chat = st.button("Clear / Reset", key="clear_chat_button", use_container_width=True)
+    if clear_chat:
         st.session_state.chat_history = []
         st.success("Chat cleared.")
+
+    # ---------------- Logos section ----------------
+    import base64
+
+    def render_logo(path, width=60):
+        with open(path, "rb") as f:
+            data = base64.b64encode(f.read()).decode()
+        return f'<img src="data:image/png;base64,{data}" style="width:{width}px;"/>'
+
+    logos_html = f"""
+    <div style="text-align:center; margin-top:15px; margin-bottom:8px; font-weight:500; font-size:18px; color:white;">
+        Build & Deployed on
+    </div>
+    <div style="display:flex; justify-content:center; align-items:center; gap:40px; margin-top:10px;">
+        {render_logo("llmatscale-logo.png")}
+        {render_logo("gcplogo.png")}
+        {render_logo("github.png")}
+    </div>
+    """
+
+    st.markdown(logos_html, unsafe_allow_html=True)
+
+
+
 # ---------- BigQuery connectivity test ----------
 def test_bq_connection():
     try:
         client = bigquery.Client(project=PROJECT)
         df = client.query("SELECT 1 as ok LIMIT 1").result().to_dataframe()
-        return True, f"Connected to BigQuery project"
+        return True, f"Connected to BigQuery project: {client.project}"
     except Exception as ex:
         return False, str(ex)
 
@@ -565,7 +756,7 @@ def render_logo_inline(path, width=260):
     return True
 
 logo_paths = [
-    "llmatscaleai.png"
+    "C:\\Users\\Mohitha\\Downloads\\LLM_RAG_Tracing_Evaluation-main\\LLM_RAG_Tracing_Evaluation-main\\src\\llmatscaleai.png"
 ]
 
 logo_shown = False
@@ -580,12 +771,15 @@ if not logo_shown:
 # ---------- Centered heading & description ----------
 st.markdown('<h2 class="centered-h2">Patent Vision</h2>', unsafe_allow_html=True)
 st.markdown(
-    """
-    <p style="text-align:center; color:gray; font-size:16px; margin-top:-6px;">
-     Ask questions about patents and get AI-powered answers.  
-     Simply type your query below and click <b>Send</b>.
-     eg. Battery thermal runaway prevention in EV
-    </p>
+      """
+    <div style="text-align:center; margin-top:-6px; margin-bottom:16px;">
+        <p style="color:#444; font-size:17px; line-height:1.5; margin-bottom:8px;">
+            Ask questions about patents and get AI-powered answers.
+            Simply type your query below and click <b>Send</b>.<br>
+            <i>eg. Battery thermal runaway prevention in EV</i>
+        </p>
+        <hr style="margin-top:20px; border:none; border-top:2px solid #888; width:100%;">
+    </div>
     """,
     unsafe_allow_html=True,
 )
@@ -724,6 +918,3 @@ if last_assistant:
                     st.write("No sources to show.")
 
 st.caption("If you see ADC errors when calling BigQuery, run `gcloud auth application-default login` or set GOOGLE_APPLICATION_CREDENTIALS.")
-
-
-
