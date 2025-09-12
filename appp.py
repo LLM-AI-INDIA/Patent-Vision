@@ -620,7 +620,7 @@ with st.sidebar:
         Build & Deployed on
     </div>
     <div style="display:flex; justify-content:center; align-items:center; gap:40px; margin-top:10px;">
-        {render_logo("llmatscale-logo.png")}
+        {render_logo("llmatscaleai.png")}
         {render_logo("gcplogo.png")}
         {render_logo("github.png")}
     </div>
@@ -918,3 +918,4 @@ if last_assistant:
                     st.write("No sources to show.")
 
 st.caption("If you see ADC errors when calling BigQuery, run `gcloud auth application-default login` or set GOOGLE_APPLICATION_CREDENTIALS.")
+
