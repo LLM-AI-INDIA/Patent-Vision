@@ -756,7 +756,7 @@ def render_logo_inline(path, width=260):
     return True
 
 logo_paths = [
-    llmatscaleai.png"
+    "llmatscaleai.png"
 ]
 
 logo_shown = False
@@ -918,5 +918,6 @@ if last_assistant:
                     st.write("No sources to show.")
 
 st.caption("If you see ADC errors when calling BigQuery, run `gcloud auth application-default login` or set GOOGLE_APPLICATION_CREDENTIALS.")
+
 
 
