@@ -9,4 +9,9 @@ google-auth-oauthlib==1.2.0
 requests==2.31.0
 numpy==1.27.0
 db-dtypes==1.4.3
-rich==14.1.0
+protobuf==4.25.3
+six==1.16.0
+urllib3==1.26.18
+certifi==2024.7.4
+charset-normalizer==3.3.2
+idna==3.6
