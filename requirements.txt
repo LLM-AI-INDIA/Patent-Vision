@@ -1,4 +1,3 @@
-# Streamlit app + Google APIs (adjust pins if you tested specific versions locally)
 streamlit==1.49.1
 google-cloud-bigquery==3.38.0
 google-cloud-aiplatform==1.34.0
