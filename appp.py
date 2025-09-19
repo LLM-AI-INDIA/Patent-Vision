@@ -527,6 +527,302 @@ def df_from_sources_list(sources_list):
     except Exception:
         return pd.DataFrame()
 
+# ---------- Vertex init (LLM-as-judge) ----------
+# configure these to your project / region / desired model
+_VERTEX_PROJECT = PROJECT
+_VERTEX_LOCATION = "us-central1"            # change if needed
+_VERTEX_MODEL_NAME = "gemini-2.5-pro"     # change to an available model for your project
+
+# initialize Vertex once (safe: wrapped in try so app still runs if init fails)
+try:
+    vertexai.init(project=_VERTEX_PROJECT, location=_VERTEX_LOCATION)
+    _MODEL_HANDLE = generative_models.GenerativeModel(_VERTEX_MODEL_NAME)
+except Exception as e:
+    _MODEL_HANDLE = None
+    print("Vertex init failed (judge disabled):", e)
+    print("MODEL HANDLE methods:", [m for m in dir(_MODEL_HANDLE) if not m.startswith("_")])
+
+# ---------- end Vertex init ----------
+
+# ---------- LLM-as-judge helper (use Vertex generative model) ----------
+def _find_first_json_object(s: str):
+    """Return the substring containing the first balanced JSON object in s, or None."""
+    if not s:
+        return None
+    start = s.find('{')
+    if start == -1:
+        return None
+    stack = []
+    for i in range(start, len(s)):
+        ch = s[i]
+        if ch == '{':
+            stack.append('{')
+        elif ch == '}':
+            if not stack:
+                continue
+            stack.pop()
+            if not stack:
+                return s[start:i+1]
+    return None
+
+def _sanitize_markdown(raw: str) -> str:
+    """Remove leading/trailing markdown code fences and language markers."""
+    if not raw:
+        return raw
+    text = raw.strip()
+    text = re.sub(r"^\s*```(?:json|json\n)?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*```\s*$", "", text)
+    text = text.strip("` \n\r\t")
+    return text
+
+def _extract_percent_from_text(s: str):
+    """
+    Try multiple regex patterns to infer a relevance percentage from free text.
+    Returns float 0..100 or None.
+    """
+    if not s:
+        return None
+
+    # 1) Look for explicit percent values near the words 'relevance' or 'score'
+    patterns = [
+        r"(?:relevance|relevance_pct|relevance%|relevance score|score)\s*[:is\-]*\s*([0-9]{1,3}(?:\.[0-9]+)?\s*%?)",
+        r"(?:relevance|score)\s*\=\s*([0-9]{1,3}(?:\.[0-9]+)?\s*%?)",
+        r"([0-9]{1,3}(?:\.[0-9]+)?)\s*percent",                       # e.g., "87 percent"
+        r"([0-9]{1,3}(?:\.[0-9]+)?)\s*%",                            # e.g., "87%"
+    ]
+    for pat in patterns:
+        m = re.search(pat, s, flags=re.IGNORECASE)
+        if m:
+            try:
+                token = m.group(1)
+                token = token.strip().rstrip('%').strip()
+                val = float(token)
+                # If value is between 0 and 1, assume fraction
+                if 0.0 <= val <= 1.0:
+                    val = val * 100.0
+                val = round(max(min(val, 100.0), 0.0), 2)
+                return val
+            except Exception:
+                continue
+
+    # 2) Heuristic: find any percent anywhere if the above failed (pick first)
+    m_anypct = re.search(r"([0-9]{1,3}(?:\.[0-9]+)?)\s*%", s)
+    if m_anypct:
+        try:
+            val = float(m_anypct.group(1))
+            val = round(max(min(val, 100.0), 0.0), 2)
+            return val
+        except Exception:
+            pass
+
+    # 3) Look for isolated numeric tokens close to the word 'relevance' (within ~40 chars)
+    m_rel = re.search(r"(relevance|score).{0,40}?([0-9]{1,3}(?:\.[0-9]+)?)", s, flags=re.IGNORECASE)
+    if m_rel:
+        try:
+            val = float(m_rel.group(2))
+            if 0.0 <= val <= 1.0:
+                val = val * 100.0
+            val = round(max(min(val, 100.0), 0.0), 2)
+            return val
+        except Exception:
+            pass
+
+    # 4) Last-resort: if the text says things like "highly relevant" / "low relevance" we can map to coarse bins (optional)
+    keywords = {
+        r"\b(highly relevant|very relevant|excellent match|perfect match)\b": 95.0,
+        r"\b(moderately relevant|somewhat relevant|good match)\b": 70.0,
+        r"\b(slightly relevant|weak match|partial match)\b": 40.0,
+        r"\b(not relevant|irrelevant|no match)\b": 5.0,
+    }
+    for pat, score in keywords.items():
+        if re.search(pat, s, flags=re.IGNORECASE):
+            return score
+
+    return None
+
+def llm_judge_relevance(query: str, answer: str, max_retries: int = 1, allow_coerce: bool = True):
+    """
+    Returns (relevance_pct: float 0..100 or None, explanation: str or None, raw: str)
+    - allow_coerce: if True, will make a secondary model call asking explicitly for JSON if no numeric relevance found.
+    """
+    global _MODEL_HANDLE
+    if _MODEL_HANDLE is None:
+        return None, "Vertex model not initialized", None
+
+    # Strong instruction: ask for raw JSON only + fallback JSON if impossible
+    prompt = (
+        "You are a precise evaluator. Given USER QUERY and ANSWER, return ONLY valid JSON with keys:\n"
+        '{"relevance": <number between 0 and 100>, "explanation": "<one-sentence reason>"}\n\n'
+        "IMPORTANT: Return raw JSON only (no surrounding backticks, no markdown, no commentary). "
+        "If you cannot produce valid JSON, return {\"relevance\": null, \"explanation\": \"<one-line reason>\"}.\n\n"
+        "USER QUERY:\n" + json.dumps(query) + "\n\n"
+        "ANSWER:\n" + json.dumps(answer) + "\n\n"
+    )
+
+    # extractor for many response shapes
+    def extract_text(resp):
+        if resp is None:
+            return ""
+        if hasattr(resp, "text") and resp.text:
+            return str(resp.text).strip()
+        try:
+            cand = getattr(resp, "candidates", None)
+            if cand:
+                parts_texts = []
+                for c in cand:
+                    cont = getattr(c, "content", None)
+                    if cont and getattr(cont, "parts", None):
+                        for p in cont.parts:
+                            if getattr(p, "text", None):
+                                parts_texts.append(p.text)
+                    elif getattr(c, "text", None):
+                        parts_texts.append(c.text)
+                if parts_texts:
+                    return "".join(parts_texts).strip()
+        except Exception:
+            pass
+        try:
+            if hasattr(resp, "output") and resp.output:
+                return str(resp.output).strip()
+        except Exception:
+            pass
+        try:
+            return str(resp).strip()
+        except Exception:
+            return ""
+
+    # detect supported kwargs for generate_content
+    try:
+        sig = inspect.signature(_MODEL_HANDLE.generate_content)
+        sig_params = set(sig.parameters.keys())
+    except Exception:
+        sig_params = set()
+    preferred_kwargs = {
+        "temperature": 0.0,
+        "max_output_tokens": 200,
+        "max_output_chars": 20000,
+        "candidate_count": 1,
+    }
+    supported_kwargs = {k: v for k, v in preferred_kwargs.items() if k in sig_params}
+
+    raw_text = ""
+    for attempt in range(max_retries + 1):
+        try:
+            if supported_kwargs:
+                resp = _MODEL_HANDLE.generate_content(prompt, **supported_kwargs)
+            else:
+                resp = _MODEL_HANDLE.generate_content(prompt)
+            raw_text = extract_text(resp)
+            break
+        except TypeError:
+            # fallback to calling without kwargs
+            try:
+                resp = _MODEL_HANDLE.generate_content(prompt)
+                raw_text = extract_text(resp)
+                break
+            except Exception as e:
+                raw_text = f"vertex call failed: {e}"
+                if attempt < max_retries:
+                    time.sleep(0.3)
+                    continue
+                else:
+                    return None, raw_text, raw_text
+        except Exception as e:
+            raw_text = f"vertex call failed: {e}"
+            if attempt < max_retries:
+                time.sleep(0.3)
+                continue
+            else:
+                return None, raw_text, raw_text
+
+    cleaned = _sanitize_markdown(raw_text)
+
+    # 1) Try direct JSON parse
+    try:
+        parsed = json.loads(cleaned)
+        if isinstance(parsed, dict) and "relevance" in parsed:
+            rel = parsed["relevance"]
+            if isinstance(rel, (int, float)) and 0.0 <= rel <= 1.0:
+                rel = float(rel) * 100.0
+            rel = round(max(min(float(rel), 100.0), 0.0), 2) if rel is not None else None
+            return rel, parsed.get("explanation"), raw_text
+    except Exception:
+        pass
+
+    # 2) Find first JSON object anywhere in cleaned text
+    candidate_json = _find_first_json_object(cleaned)
+    if candidate_json:
+        try:
+            parsed = json.loads(candidate_json)
+            if isinstance(parsed, dict) and "relevance" in parsed:
+                rel = parsed["relevance"]
+                if isinstance(rel, (int, float)) and 0.0 <= rel <= 1.0:
+                    rel = float(rel) * 100.0
+                rel = round(max(min(float(rel), 100.0), 0.0), 2) if rel is not None else None
+                return rel, parsed.get("explanation"), raw_text
+        except Exception:
+            pass
+
+    # 3) Try to extract percent/numeric heuristically from the free text
+    pct = _extract_percent_from_text(cleaned or raw_text)
+    if pct is not None:
+        # attempt to find a short explanation: the first sentence of the model output
+        expl = None
+        first_line = (cleaned or raw_text).splitlines()[0].strip()
+        if first_line and len(first_line) < 400:
+            expl = first_line
+        return pct, expl, raw_text
+
+    # 4) If allowed, attempt a coercion: ask model to OUTPUT ONLY the JSON (secondary call)
+    if allow_coerce:
+        coercion_prompt = (
+            "You previously returned text that did not contain a numeric relevance. "
+            "Now: OUTPUT ONLY valid JSON with keys {\"relevance\": <number 0..100>, \"explanation\": \"one-sentence reason\"}. "
+            "If you cannot produce a numeric relevance, set relevance to null. "
+            "Do not include any backticks or extra text.\n\n"
+            "PREVIOUS MODEL OUTPUT:\n" + json.dumps(cleaned or raw_text) + "\n\n"
+            "Return only the JSON."
+        )
+        try:
+            if supported_kwargs:
+                resp2 = _MODEL_HANDLE.generate_content(coercion_prompt, **supported_kwargs)
+            else:
+                resp2 = _MODEL_HANDLE.generate_content(coercion_prompt)
+            raw2 = extract_text(resp2)
+            raw2_clean = _sanitize_markdown(raw2)
+            # try parse
+            try:
+                parsed2 = json.loads(raw2_clean)
+                rel2 = parsed2.get("relevance", None)
+                if isinstance(rel2, (int, float)) and 0.0 <= rel2 <= 1.0:
+                    rel2 = float(rel2) * 100.0
+                rel2 = round(max(min(float(rel2), 100.0), 0.0), 2) if rel2 is not None else None
+                return rel2, parsed2.get("explanation"), raw_text + "\n\n(secondary_coercion):\n" + raw2
+            except Exception:
+                # if not JSON, try regex extraction on raw2
+                p2 = _extract_percent_from_text(raw2_clean)
+                if p2 is not None:
+                    return p2, None, raw_text + "\n\n(secondary_coercion):\n" + raw2
+        except Exception:
+            # ignore coercion failures and fall through
+            pass
+
+    # 5) No numeric found — return None plus short explanation (first sentence of the model output)
+    fallback_expl = None
+    if cleaned:
+        # first sentence as explanation
+        sentences = re.split(r'(?<=[.!?])\s+', cleaned.strip())
+        fallback_expl = sentences[0] if sentences else cleaned.strip()
+        if len(fallback_expl) > 400:
+            fallback_expl = fallback_expl[:400] + "..."
+    elif raw_text:
+        fallback_expl = (raw_text[:300] + "...") if len(raw_text) > 300 else raw_text
+
+    return None, fallback_expl, raw_text
+
+
+
+
 # ---------- Session defaults ----------
 if "top_k_val" not in st.session_state:
     st.session_state.top_k_val = 5
@@ -693,13 +989,37 @@ def run_rag_query(q_text: str, top_k:int, temperature:float, max_output_tokens:i
         try:
             sql_sources = f"""
             DECLARE user_query STRING DEFAULT @user_query;
-            WITH q AS (
-              SELECT ml_generate_embedding_result AS text_embedding
-              FROM ML.GENERATE_EMBEDDING(MODEL {EMB_MODEL}, (SELECT user_query AS content))
-            )
-            SELECT base.publication_number, base.title, base.abstract, distance
-            FROM VECTOR_SEARCH(TABLE {EMB_TABLE}, 'text_embedding', TABLE q, top_k => {top_k}, distance_type => 'COSINE')
-            ORDER BY distance;
+        WITH q AS (
+          SELECT ml_generate_embedding_result AS text_embedding
+          FROM ML.GENERATE_EMBEDDING(MODEL {EMB_MODEL}, (SELECT user_query AS content))
+        )
+        SELECT
+          base.publication_number,
+          base.title,
+          base.abstract,
+          distance,
+          ROUND(
+            GREATEST(
+              LEAST(
+                CASE
+                  WHEN distance IS NULL THEN 0
+                  WHEN distance <= 1 THEN (1 - distance) * 100
+                  ELSE (1 - distance / 2) * 100
+                END,
+                100
+              ),
+              0
+            ),
+            2
+          ) AS relevance_pct
+        FROM VECTOR_SEARCH(
+          TABLE {EMB_TABLE},
+          'text_embedding',
+          TABLE q,
+          top_k => {top_k},
+          distance_type => 'COSINE'
+        )
+        ORDER BY distance;
             """
             sjob = client.query(sql_sources, job_config=bigquery.QueryJobConfig(
                 query_parameters=[bigquery.ScalarQueryParameter("user_query","STRING", q_text)]
@@ -804,7 +1124,13 @@ with chat_box:
         else:
             cols = st.columns([1, 6, 1])
             with cols[0]:
-                st.markdown(f"<div class='meta'>Assistant · {ts}{(' · '+str(meta.get('elapsed'))+'s') if meta.get('elapsed') else ''}</div>", unsafe_allow_html=True)
+                # render meta line including elapsed and judge relevance if available
+                meta_line = f"Assistant · {ts}"
+                if meta.get("elapsed"):
+                    meta_line += f" · {meta.get('elapsed')}s"
+                if meta.get("relevance_pct") is not None:
+                    meta_line += f" · relevance: {meta.get('relevance_pct')}%"
+                st.markdown(f"<div class='meta'>{meta_line}</div>", unsafe_allow_html=True)
             cols2 = st.columns([0.6, 9, 0.6])
             with cols2[1]:
                 md_html = html_lib.escape(display_text).replace("\n","<br/>")
@@ -812,6 +1138,10 @@ with chat_box:
                     f"<div class='assistant-bubble'>{md_html}</div>",
                     unsafe_allow_html=True
                 )
+
+                # optional: show judge explanation under the answer
+                if meta.get("relevance_expl"):
+                    st.markdown(f"*Judge:* {html_lib.escape(str(meta.get('relevance_expl')))}")
 
                 # Sources as expanders
                 sources_list = msg.get("sources", None)
@@ -822,11 +1152,15 @@ with chat_box:
                         title = str(row.get("title", ""))
                         dist = row.get("distance", "")
                         abstract = str(row.get("abstract", ""))
+                        relevance = row.get("relevance_pct","")
+
                         label = f"{i+1}. {pub} — {title}"
                         with st.expander(label, expanded=False):
                             st.markdown("**Pub ID:** " + pub)
                             st.markdown("**Title:** " + title)
                             st.markdown("**Distance:** " + str(dist))
+                            if relevance is not None and relevance != "":
+                                st.markdown("**Relevance:** " + str(relevance) + " %")   # 👈 added line
                             if abstract:
                                 snippet = abstract
                                 if len(snippet) > 500:
@@ -854,7 +1188,7 @@ if submitted and user_input and user_input.strip():
             "meta": {}
         })
 
-        # Run retrieval + generation
+        # Run retrieval + generation (with LLM-as-judge scoring)
         with st.spinner("Running retrieval + generation..."):
             try:
                 start = datetime.datetime.utcnow()
@@ -866,12 +1200,20 @@ if submitted and user_input and user_input.strip():
                     show_sources=st.session_state.get("show_sources_box", True)
                 )
                 elapsed = round((datetime.datetime.utcnow() - start).total_seconds(), 2)
+
+                # --- Call LLM judge to get overall relevance ---
+                try:
+                    relevance_val, relevance_expl, relevance_raw = llm_judge_relevance(user_input.strip(), answer)
+                except Exception as ex_j:
+                    relevance_val, relevance_expl, relevance_raw = None, f"judge error: {ex_j}", None
+
+                # append assistant message including relevance_pct in meta
                 st.session_state.chat_history.append({
                     "role":"assistant",
                     "text": safe_store_text(answer or "(no answer)"),
                     "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "sources": sources_list if (st.session_state.get("show_sources_box", True) and sources_list) else None,
-                    "meta": {"elapsed": elapsed}
+                    "meta": {"elapsed": elapsed, "relevance_pct": relevance_val, "relevance_expl": relevance_expl}
                 })
             except Exception as e:
                 st.exception(e)
@@ -918,6 +1260,3 @@ if last_assistant:
                     st.write("No sources to show.")
 
 st.caption("If you see ADC errors when calling BigQuery, run `gcloud auth application-default login` or set GOOGLE_APPLICATION_CREDENTIALS.")
-
-
-
