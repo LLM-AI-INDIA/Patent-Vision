@@ -1275,3 +1275,4 @@ if last_assistant:
 
 st.caption("If you see ADC errors when calling BigQuery, run `gcloud auth application-default login` or set GOOGLE_APPLICATION_CREDENTIALS.")
 
+
