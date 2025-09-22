@@ -870,7 +870,10 @@ with st.sidebar:
     app = st.sidebar.selectbox("Application", APPLICATION_OPTS, index=0, key="application_sel")
     libs = st.sidebar.selectbox("Libraries", LIBRARIES_OPTS, index=0, key="libraries_sel")
 
-
+    st.markdown(
+        f"<div style='color:#ffffff; font-weight:400;'>top_k (retrieval): <span style='font-weight:400'>{st.session_state.get('top_k_val', 5)}</span></div>",
+        unsafe_allow_html=True
+    )
 
     st.session_state.top_k_val = st.number_input(
         "top_k (retrieval)", min_value=1, max_value=50,
@@ -878,12 +881,23 @@ with st.sidebar:
         format="%d", key="top_k_number"
     )
 
+    st.markdown(
+    f"<div style='color:#ffffff; font-weight:400;'>temperature: <span style='font-weight:400'>{st.session_state.get('temperature_val', 0.2)}</span></div>",
+    unsafe_allow_html=True
+    )
+    
     st.session_state.temperature_val = st.number_input(
         "temperature", min_value=0.0, max_value=1.0,
         value=st.session_state.get("temperature_val", 0.2),
         step=0.01, format="%.2f", key="temperature_number"
     )
 
+
+    st.markdown(
+    f"<div style='color:#ffffff; font-weight:400;'>max_output_tokens: <span style='font-weight:400'>{st.session_state.get('max_output_tokens_val', 800)}</span></div>",
+    unsafe_allow_html=True
+    )
+    
     st.session_state.max_output_tokens_val = st.number_input(
         "max_output_tokens", min_value=64, max_value=2000,
         value=st.session_state.get("max_output_tokens_val", 800),
@@ -1260,3 +1274,4 @@ if last_assistant:
                     st.write("No sources to show.")
 
 st.caption("If you see ADC errors when calling BigQuery, run `gcloud auth application-default login` or set GOOGLE_APPLICATION_CREDENTIALS.")
+
